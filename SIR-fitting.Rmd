@@ -1,0 +1,116 @@
+---
+title: "SIR-fitting"
+output: html_document
+---
+
+##Read the data and set the work space
+```{r setup, include=FALSE}
+library(deSolve)
+#setwd("C:\\Users\\Laplace\\Desktop") set work space
+mydata <- read.table("cases.txt", header = T, sep = "\t")
+```
+
+##Define the each variables
+```{r}
+Infected <- mydata$Infected
+Day <- mydata$Day
+```
+##Build the SIR model first, S-Susceptible, I-infected, R-Recovered
+
+```{r}
+SIR <- function(time, state, parameters) {
+  par <- as.list(c(state, parameters))
+  with(par, {
+    dS <- -beta/N * I * S
+    dI <- beta/N * I * S - gamma * I
+    dR <- gamma * I
+    list(c(dS, dI, dR))
+  })
+}
+```
+##Set the original parameters about S_0, I_0, R_0, beta and gamma
+
+```{r}
+N <- 74510 
+init <- c(S = N-Infected[1], I = Infected[1], R = 1117)
+
+parameters_values <- c(
+  beta  = 0.56, # infectious contact rate (/person/day) 
+  gamma = 0.45286    # recovery rate (/day)
+)
+```
+
+##Give the x-axis value
+```{r}
+time_values <- seq(0, 62, by = 1)
+```
+
+##Running "ode" function
+
+```{r}
+sir_values_1 <- ode(
+  y = init,
+  times = time_values,
+  func = SIR,
+  parms = parameters_values 
+)
+```
+
+##All results can be settled as the format of data.frame.
+```{r}
+sir_values_1 <- as.data.frame(sir_values_1)
+```
+
+##Ues the least square method to evaluate "beta" and "gamma"
+
+```{r}
+RSS <- function(parameters) {
+  names(parameters) <- c("beta", "gamma")
+  out <- ode(y = init, times = Day, func = SIR, parms = parameters)
+  fit <- out[ , 3]
+  sum((Infected - fit)^2)
+}
+Opt <- optim(c(0.5, 0.5), RSS, method = "L-BFGS-B", lower = c(0, 0), upper = c(1, 1)) # optimize with some sensible conditions
+Opt$message
+## [1] "CONVERGENCE: REL_REDUCTION_OF_F <= FACTR*EPSMCH"
+Opt_par <- setNames(Opt$par, c("beta", "gamma"))
+Opt_par
+```
+
+##Resulits visualization
+```{r}
+t <- 1:62 # time in days
+fit <- data.frame(ode(y = init, times = t, func = SIR, parms = Opt_par))
+col <- 1:3 # colour
+matplot(fit$time, fit[ , 2:4], type = "l", xlab = "Day", ylab = "Number of subjects", lwd = 2, lty = 1, col = col)
+matplot(fit$time, fit[ , 2:4], type = "l", xlab = "Day", ylab = "Number of subjects", lwd = 2, lty = 1, col = col, log = "y")
+## Warning in xy.coords(x, y, xlabel, ylabel, log = log): 1 y value <= 0
+## omitted from logarithmic plot
+points(Day, Infected)
+legend("bottomright", c("Susceptibles", "Infecteds", "Recovereds"), lty = 1, lwd = 2, col = col, inset = 0.05)
+title("Fitting SIR model for Covid-19 in HongKong", outer = TRUE, line = -2)
+
+actual_infected <- mydata$Infected
+predict_infected <- fit$I
+
+SD_fit <- sd(actual_infected - predict_infected)
+
+cl <- 0.95 # confidence level
+cl <- (1 - cl) / 2
+lwr <- qnorm(p = cl, mean = predict_infected, sd = SD_fit)
+upr <- qnorm(p = 1 - cl, mean = predict_infected, sd = SD_fit)
+# layout of the plot:
+plot(fit$time, fit$time, ylim = c(0, max(upr)), type = "n",
+     xlab = "time (days)", ylab = "Infected",main = "SIR Model fitted by LSE")
+
+# adding the predictions' confidence interval:
+sel <- fit$time >= 1 # predictions start from the second data point
+polygon(c(fit$time[sel], rev(fit$time[sel])), c(upr[sel], rev(lwr[sel])),
+        border = NA, col = adjustcolor("blue", alpha.f = 0.1))
+# adding the model's best predictions:
+lines(fit$time, predict_infected, col = "blue")
+# adding the observed data:
+with(mydata, points(Day, Infected, pch = 19, col = "black"))
+legend("topleft", c("Actual_data", "model_fitting"),pch = 20, col = c("black","blue"), inset = 0.05)
+```
+
